@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+langchain
+langchain-anthropic
+langchain-mistralai
+langchain-core
+langgraph
+langsmith
+pypdf
+pydantic
+python-dotenv
+python-multipart
