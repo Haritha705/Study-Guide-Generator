@@ -1,26 +1,57 @@
 import os
 from dotenv import load_dotenv
 # pyrefly: ignore [missing-import]
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
+# pyrefly: ignore [missing-import]
+
+# pyrefly: ignore [missing-import]
 from langchain_mistralai.chat_models import ChatMistralAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.runnables import RunnableLambda
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import InMemoryVectorStore
+# pyrefly: ignore [missing-import]
 from langchain_mistralai.embeddings import MistralAIEmbeddings
-from schemas import StudyPackOutput
+from app.schemas.studypack import StudyPackOutput
+from app.core.constants import DEFAULT_DIFFICULTY, DEFAULT_QUIZ_SIZE
+from app.core.exceptions import AIGenerationError
+from app.config import settings
 from langsmith import traceable
 
 load_dotenv()
 
+
+def normalize_ai_message(message):
+    """Extract plain text from AIMessage.content.
+
+    gemini-3.6-flash (via langchain-google-genai 4.4+) returns
+    content as a list of dicts, e.g.:
+        [{'type': 'text', 'text': '...', 'extras': {...}}]
+    instead of a plain string.  This normalizer converts back
+    to a plain-string AIMessage so downstream parsers work.
+    """
+    content = message.content
+    if isinstance(content, list):
+        text = "".join(
+            part["text"] for part in content
+            if isinstance(part, dict) and "text" in part
+        )
+        message.content = text
+    return message
+
+
 # Dual Provider Router Setup
 def get_primary_model():
-    # Claude API (claude-3-5-sonnet) for complex reasoning and structured output
-    return ChatAnthropic(model="claude-3-5-sonnet-20240620", temperature=0.2)
+    # Gemini API (gemini-3.6-flash) for complex reasoning and structured output
+    return ChatGoogleGenerativeAI(
+        model="gemini-3.6-flash",
+        google_api_key=settings.GEMINI_API_KEY,
+    )
 
 def get_secondary_model():
-    # Mistral API (mistral-large) for fast extraction and preprocessing
-    return ChatMistralAI(model="mistral-large-latest", temperature=0.1)
+    # Mistral API (open-mixtral-8x7b) for fast extraction and preprocessing
+    return ChatMistralAI(model="open-mixtral-8x7b", temperature=0.1)
 
 def get_embeddings_model():
     return MistralAIEmbeddings(model="mistral-embed")
@@ -52,6 +83,8 @@ def generate_study_pack(text_content: str) -> StudyPackOutput:
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are an expert educational AI tutor. Analyze the provided lecture notes/syllabus and generate a comprehensive study pack.\n\n"
+                   f"The response must begin with a concise summary. Generate exactly {DEFAULT_QUIZ_SIZE} MCQs, all at {DEFAULT_DIFFICULTY} difficulty, "
+                   "and include short-answer questions and glossary flashcards.\n\n"
                    "You must output STRICTLY in the following JSON format.\n"
                    "{format_instructions}"),
         ("human", "Here is the source material:\n\n{source_text}\n\nGenerate the study pack now.")
@@ -59,8 +92,25 @@ def generate_study_pack(text_content: str) -> StudyPackOutput:
     
     prompt = prompt.partial(format_instructions=parser.get_format_instructions())
     
-    chain = prompt | primary_llm | parser
+    chain = prompt | primary_llm | RunnableLambda(normalize_ai_message) | parser
     
     # Execute chain (tracked by LangSmith implicitly via environment variables)
-    result = chain.invoke({"source_text": text_content})
+    try:
+        result = chain.invoke({"source_text": text_content})
+    except Exception as exc:
+        raise AIGenerationError(f"Failed to generate study pack: {exc}") from exc
+
+    if not result.summary.strip():
+        raise AIGenerationError("Generated study pack is missing a summary.")
+    if len(result.mcqs) != DEFAULT_QUIZ_SIZE:
+        raise AIGenerationError(
+            f"Generated study pack must contain exactly {DEFAULT_QUIZ_SIZE} MCQs."
+        )
+    if any(mcq.difficulty != DEFAULT_DIFFICULTY for mcq in result.mcqs):
+        raise AIGenerationError(
+            f"Study-pack MCQs must all have {DEFAULT_DIFFICULTY} difficulty."
+        )
+    if not result.flashcards:
+        raise AIGenerationError("Generated study pack is missing glossary flashcards.")
+
     return result

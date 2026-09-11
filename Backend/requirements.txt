@@ -7,6 +7,13 @@ langchain-core
 langgraph
 langsmith
 pypdf
+reportlab
 pydantic
 python-dotenv
 python-multipart
+motor
+sqlalchemy
+aiosqlite
+pydantic-settings
+langchain-text-splitters
+langchain-google-genai

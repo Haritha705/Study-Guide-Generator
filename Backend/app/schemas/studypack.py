@@ -14,6 +14,10 @@ class GlossaryItem(BaseModel):
     term: str
     definition: str
 
+class FlashcardItem(BaseModel):
+    term: str
+    definition: str
+
 class MCQItem(BaseModel):
     id: int
     question: str
@@ -30,8 +34,10 @@ class SAQItem(BaseModel):
     topic: str
 
 class StudyPackOutput(BaseModel):
+    summary: str
     recommended_study_order: List[str]
     notes: List[NoteItem]
     glossary: List[GlossaryItem]
+    flashcards: List[FlashcardItem]
     mcqs: List[MCQItem]
     short_answers: List[SAQItem]
