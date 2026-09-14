@@ -45,3 +45,5 @@ Thumbs.db
 # Frontend (if added in future phases)
 node_modules/
 .next/
+
+Add-Content .gitignore "`n# Python cache`n__pycache__/`n*.pyc`n`n# TypeScript build info`n*.tsbuildinfo"
