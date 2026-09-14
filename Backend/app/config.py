@@ -2,8 +2,9 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Resolve .env relative to this file (app/config.py → Backend/.env)
+# Resolve .env files (app/config.py → Backend/.env and parent workspace .env)
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+_ROOT_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 
@@ -20,6 +21,14 @@ class Settings(BaseSettings):
     # Mistral API
     MISTRAL_API_KEY: str = ""
 
+    # External Educational APIs
+    YOUTUBE_API_KEY: str = ""
+    GOOGLE_BOOKS_API_KEY: str = ""
+
+    # Google Drive MCP Integration
+    GOOGLE_DRIVE_MCP_URL: str = "https://drivemcp.googleapis.com/mcp/v1"
+    GOOGLE_DRIVE_MCP_TOKEN: str = ""
+
     # LangSmith - Optional
     # LANGCHAIN_TRACING_V2: str = "false"
     # LANGCHAIN_API_KEY: str = ""
@@ -27,9 +36,9 @@ class Settings(BaseSettings):
     # Vector Store
     VECTOR_STORE_PROVIDER: str = "memory"
 
-    # Load variables from .env
+    # Load variables from .env (root .env loaded first, Backend/.env overrides if present)
     model_config = SettingsConfigDict(
-        env_file=str(_ENV_FILE),
+        env_file=(str(_ROOT_ENV), str(_ENV_FILE)),
         env_file_encoding="utf-8",
         extra="ignore"
     )

@@ -110,3 +110,64 @@ export interface UserProfile {
   name: string;
   avatar?: string;
 }
+
+// ─── Google Drive MCP ──────────────────────────────────────────────────────
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  modifiedTime?: string;
+  webViewLink?: string;
+}
+
+export interface DriveStatus {
+  connected: boolean;
+  server_url: string;
+  status: string;
+  tools_count: number;
+  tools: string[];
+  detail?: string;
+}
+
+export interface DriveFilesResponse {
+  files: DriveFile[];
+  count: number;
+}
+
+// ─── Google Books API ──────────────────────────────────────────────────────
+
+export interface BookItem {
+  title: string;
+  authors: string[];
+  publisher?: string;
+  publishedDate?: string;
+  description?: string;
+  thumbnail?: string;
+  previewLink?: string;
+  infoLink?: string;
+  categories: string[];
+}
+
+export interface BooksResponse {
+  topic: string;
+  books: BookItem[];
+}
+
+// ─── YouTube Data API ──────────────────────────────────────────────────────
+
+export interface VideoItem {
+  video_id: string;
+  title: string;
+  description: string;
+  channel_title: string;
+  published_at: string;
+  thumbnail: string;
+  video_url: string;
+}
+
+export interface VideosResponse {
+  topic: string;
+  videos: VideoItem[];
+}

@@ -9,6 +9,7 @@ import { ShortAnswersTab } from "./ShortAnswersTab";
 import { FlashcardsTab } from "./FlashcardsTab";
 import { GlossaryTab } from "./GlossaryTab";
 import { AITutorTab } from "./AITutorTab";
+import { ResourcesTab } from "./ResourcesTab";
 import {
   FileText,
   BookOpen,
@@ -19,6 +20,7 @@ import {
   Bot,
   Calendar,
   Sparkles,
+  BookMarked,
 } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -73,6 +75,11 @@ export function StudyPackView({ pack, initialTab = "summary" }: StudyPackViewPro
       label: "AI Tutor",
       icon: Bot,
       highlight: true,
+    },
+    {
+      id: "resources",
+      label: "Resources",
+      icon: BookMarked,
     },
   ];
 
@@ -187,6 +194,7 @@ export function StudyPackView({ pack, initialTab = "summary" }: StudyPackViewPro
         {activeTab === "flashcards" && <FlashcardsTab pack={pack} />}
         {activeTab === "glossary" && <GlossaryTab pack={pack} />}
         {activeTab === "tutor" && <AITutorTab pack={pack} />}
+        {activeTab === "resources" && <ResourcesTab pack={pack} />}
       </div>
     </div>
   );

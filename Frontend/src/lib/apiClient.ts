@@ -6,6 +6,10 @@ import {
   TutorRequest,
   TutorResponse,
   Difficulty,
+  DriveStatus,
+  DriveFilesResponse,
+  BooksResponse,
+  VideosResponse,
 } from "@/types";
 
 const API_BASE_URL =
@@ -152,5 +156,56 @@ export const api = {
     }
 
     return response.blob();
+  },
+
+  // ─── 9. Google Drive MCP ────────────────────────────────────────────────
+
+  drive: {
+    /** Check if Google Drive MCP server is reachable and authenticated. */
+    async getStatus(): Promise<DriveStatus> {
+      return request<DriveStatus>("/api/v1/drive/status");
+    },
+
+    /** List or search Drive files (PDFs). */
+    async listFiles(
+      query: string = "",
+      pageSize: number = 10
+    ): Promise<DriveFilesResponse> {
+      const params = new URLSearchParams();
+      if (query) params.set("query", query);
+      params.set("page_size", String(pageSize));
+      return request<DriveFilesResponse>(`/api/v1/drive/files?${params}`);
+    },
+
+    /** Extract raw text from a Drive PDF file. */
+    async extractText(fileId: string): Promise<{ file_id: string; extracted_text: string }> {
+      return request<{ file_id: string; extracted_text: string }>(
+        `/api/v1/drive/files/${encodeURIComponent(fileId)}/extract`
+      );
+    },
+
+    /** Generate a full StudyPack directly from a Drive file ID. */
+    async generate(fileId: string): Promise<StudyPackOutput> {
+      return request<StudyPackOutput>("/api/v1/drive/generate", {
+        method: "POST",
+        body: JSON.stringify({ file_id: fileId }),
+      });
+    },
+  },
+
+  // ─── 10. Study Resources (Books + Videos) ───────────────────────────────
+
+  resources: {
+    /** Fetch relevant books for a study topic from Google Books API. */
+    async getBooks(topic: string, maxResults: number = 5): Promise<BooksResponse> {
+      const params = new URLSearchParams({ topic, max_results: String(maxResults) });
+      return request<BooksResponse>(`/api/v1/study-pack/books?${params}`);
+    },
+
+    /** Fetch educational YouTube videos for a study topic. */
+    async getVideos(topic: string, maxResults: number = 5): Promise<VideosResponse> {
+      const params = new URLSearchParams({ topic, max_results: String(maxResults) });
+      return request<VideosResponse>(`/api/v1/study-pack/videos?${params}`);
+    },
   },
 };

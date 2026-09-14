@@ -4,7 +4,8 @@ import React, { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/apiClient";
 import { useStudyStore } from "@/stores/useStudyStore";
-import { Difficulty, StudyPackOutput } from "@/types";
+import { Difficulty, DriveFile, StudyPackOutput } from "@/types";
+import { DriveBrowser } from "@/components/upload/DriveBrowser";
 import {
   UploadCloud,
   FileText,
@@ -18,7 +19,7 @@ import {
   Zap,
   ShieldCheck,
   ArrowRight,
-  BookOpen,
+  Cloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,9 +27,10 @@ export function CreateStudyPack() {
   const router = useRouter();
   const { savePack, setActivePack } = useStudyStore();
 
-  const [inputMode, setInputMode] = useState<"upload" | "paste">("upload");
+  const [inputMode, setInputMode] = useState<"upload" | "paste" | "drive">("upload");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState("");
+  const [selectedDriveFile, setSelectedDriveFile] = useState<DriveFile | null>(null);
   const [packTitle, setPackTitle] = useState("");
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>("Medium");
   const [quizSize, setQuizSize] = useState<number>(10);
@@ -40,7 +42,7 @@ export function CreateStudyPack() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const steps = [
-    "Analyzing document & extracting structural semantics",
+    "Fetching document from Google Drive / Analyzing content",
     "Synthesizing comprehensive executive summary",
     "Generating adaptive MCQs (Easy, Medium, Tough)",
     "Formulating short answers with grading rubrics",
@@ -83,7 +85,7 @@ export function CreateStudyPack() {
       setIsGenerating(true);
       setCurrentStep(0);
 
-      // 1. Get raw text either from PDF or pasted text
+      // 1. Get raw text from PDF upload, pasted text, or Google Drive
       if (inputMode === "upload") {
         if (!selectedFile) {
           setErrorMessage("Please upload a PDF file first.");
@@ -93,6 +95,19 @@ export function CreateStudyPack() {
         setCurrentStep(0);
         const extractRes = await api.extractPDF(selectedFile);
         extractedText = extractRes.extracted_text;
+      } else if (inputMode === "drive") {
+        if (!selectedDriveFile) {
+          setErrorMessage("Please select a file from Google Drive first.");
+          setIsGenerating(false);
+          return;
+        }
+        setCurrentStep(0);
+        const driveRes = await api.drive.extractText(selectedDriveFile.id);
+        extractedText = driveRes.extracted_text;
+        // Auto-fill title from Drive filename if the user left it blank
+        if (!packTitle.trim()) {
+          setPackTitle(selectedDriveFile.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "));
+        }
       } else {
         if (!pastedText.trim() || pastedText.trim().length < 50) {
           setErrorMessage("Please enter at least 50 characters of source notes or text.");
@@ -137,9 +152,15 @@ export function CreateStudyPack() {
       const finalPack: StudyPackOutput = {
         ...generatedPack,
         id: `pack_${Date.now()}`,
-        title: packTitle.trim() || (selectedFile?.name || "Comprehensive Study Pack"),
+        title:
+          packTitle.trim() ||
+          selectedFile?.name ||
+          selectedDriveFile?.name ||
+          "Comprehensive Study Pack",
         created_at: new Date().toISOString(),
-        source_file_name: selectedFile ? selectedFile.name : "Direct Input Notes",
+        source_file_name:
+          selectedFile?.name ??
+          (selectedDriveFile ? `Google Drive — ${selectedDriveFile.name}` : "Direct Input Notes"),
         source_text: extractedText.slice(0, 3000), // retain excerpt for tutor context
       };
 
@@ -264,7 +285,7 @@ export function CreateStudyPack() {
               <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                 Input Source
               </label>
-              <div className="grid grid-cols-2 p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+              <div className="grid grid-cols-3 p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
                 <button
                   type="button"
                   onClick={() => setInputMode("upload")}
@@ -290,6 +311,19 @@ export function CreateStudyPack() {
                 >
                   <Layers className="w-3.5 h-3.5" />
                   Paste Text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode("drive")}
+                  className={cn(
+                    "py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5",
+                    inputMode === "drive"
+                      ? "bg-neutral-800 text-white shadow-sm"
+                      : "text-neutral-400 hover:text-white"
+                  )}
+                >
+                  <Cloud className="w-3.5 h-3.5" />
+                  Google Drive
                 </button>
               </div>
             </div>
@@ -351,7 +385,7 @@ export function CreateStudyPack() {
                 </div>
               )}
             </div>
-          ) : (
+          ) : inputMode === "paste" ? (
             <div className="space-y-2">
               <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider">
                 Raw Study Notes or Syllabus Content
@@ -367,6 +401,20 @@ export function CreateStudyPack() {
                 <span>Minimum 50 characters required</span>
                 <span>{pastedText.length} characters</span>
               </div>
+            </div>
+          ) : (
+            /* Google Drive browser */
+            <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/40">
+              <DriveBrowser
+                selectedFile={selectedDriveFile}
+                onFileSelect={(file) => {
+                  setSelectedDriveFile(file);
+                  setErrorMessage(null);
+                  if (!packTitle.trim()) {
+                    setPackTitle(file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "));
+                  }
+                }}
+              />
             </div>
           )}
 
@@ -458,7 +506,8 @@ export function CreateStudyPack() {
               disabled={
                 isGenerating ||
                 (inputMode === "upload" && !selectedFile) ||
-                (inputMode === "paste" && pastedText.trim().length < 50)
+                (inputMode === "paste" && pastedText.trim().length < 50) ||
+                (inputMode === "drive" && !selectedDriveFile)
               }
               className="flex items-center gap-2.5 px-6 py-3 rounded-xl font-semibold text-sm text-white bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:opacity-95 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed group"
             >

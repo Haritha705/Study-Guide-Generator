@@ -50,7 +50,10 @@ app.add_middleware(
 register_exception_handlers(app)
 
 # Include API routes
+from app.api.v1.study_pack import router as study_pack_router
+
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(study_pack_router, prefix="/study-pack", tags=["StudyPack Resources"])
 
 
 @app.get("/")
