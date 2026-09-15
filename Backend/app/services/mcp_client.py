@@ -129,8 +129,8 @@ class ExternalDocumentMCPClient:
 
     async def connect(self) -> Dict[str, Any]:
         """
-        Verify connection to the MCP server by listing tools.
-        Returns server status and available tools.
+        Verify connection to the Google Drive MCP server by listing tools.
+        Uses the resolved OAuth token in the Authorization header.
         """
         payload = {
             "jsonrpc": "2.0",
@@ -138,18 +138,57 @@ class ExternalDocumentMCPClient:
             "method": "tools/list",
         }
 
+        # IMPORTANT: use _get_headers() so the OAuth Bearer token is included
+        headers = self._get_headers()
+
+        if "Authorization" not in headers:
+            return {
+                "connected": False,
+                "server_url": self.mcp_server_url,
+                "status": "HTTP 401",
+                "detail": (
+                    "Google Drive OAuth token not found. "
+                    "Authenticate Google Drive in Antigravity or configure "
+                    "GOOGLE_DRIVE_MCP_TOKEN."
+                ),
+            }
+
         try:
-            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
+            async with httpx.AsyncClient(
+                timeout=DEFAULT_TIMEOUT_SECONDS
+            ) as client:
+
                 response = await client.post(
                     self.mcp_server_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
 
             if response.status_code == 200:
                 data = response.json()
+
+                # Handle JSON-RPC errors even when HTTP status is 200
+                if "error" in data:
+                    error = data["error"]
+
+                    return {
+                        "connected": False,
+                        "server_url": self.mcp_server_url,
+                        "status": "MCP error",
+                        "detail": error.get(
+                            "message",
+                            "Unknown MCP server error"
+                        ),
+                    }
+
                 tools = data.get("result", {}).get("tools", [])
-                tool_names = [t.get("name") for t in tools if isinstance(t, dict)]
+
+                tool_names = [
+                    tool.get("name")
+                    for tool in tools
+                    if isinstance(tool, dict) and tool.get("name")
+                ]
+
                 return {
                     "connected": True,
                     "server_url": self.mcp_server_url,
@@ -158,14 +197,54 @@ class ExternalDocumentMCPClient:
                     "tools": tool_names,
                 }
 
+            if response.status_code in (401, 403):
+                return {
+                    "connected": False,
+                    "server_url": self.mcp_server_url,
+                    "status": f"HTTP {response.status_code}",
+                    "detail": (
+                        "Google Drive authentication failed. "
+                        "The OAuth access token may be expired or invalid."
+                    ),
+                }
+
             return {
                 "connected": False,
                 "server_url": self.mcp_server_url,
                 "status": f"HTTP {response.status_code}",
                 "detail": response.text[:300],
             }
+
+        except httpx.TimeoutException:
+            logger.error("Google Drive MCP connection timed out.")
+
+            return {
+                "connected": False,
+                "server_url": self.mcp_server_url,
+                "status": "timeout",
+                "detail": "Google Drive MCP server request timed out.",
+            }
+
+        except httpx.RequestError as exc:
+            logger.error(
+                "Google Drive MCP network error: %s",
+                exc
+            )
+
+            return {
+                "connected": False,
+                "server_url": self.mcp_server_url,
+                "status": "network_error",
+                "detail": str(exc),
+            }
+
         except Exception as exc:
-            logger.error("Failed to connect to MCP server: %s", exc)
+            logger.error(
+                "Failed to connect to MCP server: %s",
+                exc,
+                exc_info=True,
+            )
+
             return {
                 "connected": False,
                 "server_url": self.mcp_server_url,
