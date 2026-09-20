@@ -57,10 +57,9 @@ def build_graph():
     
     return builder
 
+# pyrefly: ignore [missing-import]
 from langgraph.checkpoint.sqlite import SqliteSaver
-import sqlite3
 
-# Use a separate database file for checkpoints with explicit connection to avoid context manager
-conn = sqlite3.connect("langgraph_checkpoints.db", check_same_thread=False)
-memory = SqliteSaver(conn)
+# Use a separate database file for checkpoints
+memory = SqliteSaver.from_conn_string("langgraph_checkpoints.db")
 agent_executor = build_graph().compile(checkpointer=memory)
