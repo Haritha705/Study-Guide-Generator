@@ -15,6 +15,7 @@ import {
   AlertCircle,
   ExternalLink,
   Clock,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ function formatModified(ts?: string): string {
 export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) {
   const [status, setStatus] = useState<DriveStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [files, setFiles] = useState<DriveFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -69,6 +71,25 @@ export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) 
     }
   }, []);
 
+  // ── 1b. Disconnect account ───────────────────────────────────────────────
+  const handleDisconnect = async () => {
+    if (!confirm("Disconnect this Google Drive account? You can then sign in with another Google ID.")) {
+      return;
+    }
+    setDisconnecting(true);
+    try {
+      await api.drive.disconnect();
+      setFiles([]);
+      setStatus(null);
+      await fetchStatus();
+    } catch (err) {
+      console.error("Failed to disconnect:", err);
+      setError("Failed to disconnect Google Drive.");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   // ── 2. Fetch file list ────────────────────────────────────────────────────
   const fetchFiles = useCallback(
     async (query: string) => {
@@ -88,6 +109,13 @@ export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) 
   );
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("google_drive_connected") === "true") {
+        fetchStatus();
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
     fetchStatus();
   }, [fetchStatus]);
 
@@ -113,7 +141,7 @@ export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) 
       return (
         <div className="flex items-center gap-3 p-4 rounded-xl bg-neutral-900/70 border border-neutral-800 text-neutral-400 text-sm animate-pulse">
           <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-          <span>Connecting to Google Drive MCP…</span>
+          <span>Connecting to Google Drive…</span>
         </div>
       );
     }
@@ -122,34 +150,65 @@ export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) 
       return (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-rose-950/30 border border-rose-800/50 text-rose-200 text-sm">
           <WifiOff className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-          <div className="space-y-1 min-w-0">
-            <p className="font-semibold text-rose-100">Google Drive MCP Not Connected</p>
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <p className="font-semibold text-rose-100">Google Drive Not Connected</p>
             <p className="text-xs text-rose-300 leading-relaxed">
               {error ||
-                "The Drive MCP server is unreachable. Run the backend and ensure your OAuth token is valid."}
+                "Connect your Google Drive account to import lecture materials and PDFs."}
             </p>
-            <button
-              type="button"
-              onClick={fetchStatus}
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-rose-300 hover:text-white transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry connection
-            </button>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <a
+                href="http://localhost:8000/api/v1/auth/google/login"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-all"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                Connect Google Drive
+              </a>
+              <button
+                type="button"
+                onClick={fetchStatus}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium border border-neutral-700/60 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry connection
+              </button>
+            </div>
           </div>
         </div>
       );
     }
 
     return (
-      <div className="flex items-center gap-3 p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/50 text-emerald-200 text-sm">
-        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-        <span className="text-xs font-medium">
-          Connected · {status.tools_count} tool{status.tools_count !== 1 ? "s" : ""} available
-        </span>
-        <span className="ml-auto text-[10px] font-mono text-emerald-600 truncate hidden sm:block">
-          {status.server_url}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/50 text-emerald-200 text-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div className="min-w-0">
+            <span className="text-xs font-semibold text-emerald-200">
+              Connected
+            </span>
+            {status.detail && (
+              <span className="ml-2 text-xs text-emerald-300/90 truncate inline-block max-w-[220px] sm:max-w-sm align-bottom font-medium">
+                · {status.detail}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            type="button"
+            onClick={handleDisconnect}
+            disabled={disconnecting}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-300 hover:text-white hover:bg-rose-950/50 border border-rose-800/40 transition-colors disabled:opacity-50"
+            title="Disconnect account to connect another Google account"
+          >
+            {disconnecting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <LogOut className="w-3.5 h-3.5" />
+            )}
+            <span>{disconnecting ? "Disconnecting…" : "Disconnect / Switch Account"}</span>
+          </button>
+        </div>
       </div>
     );
   };

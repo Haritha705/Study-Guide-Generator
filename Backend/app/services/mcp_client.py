@@ -60,6 +60,78 @@ class ExternalDocumentMCPClient:
     _IDE_TOKEN_FILE = Path.home() / ".gemini" / "antigravity-ide" / "mcp_oauth_tokens.json"
     _MCP_SERVER_KEY = "https://drivemcp.googleapis.com/mcp/v1"
 
+    # Token caching attributes
+    _cached_access_token: Optional[str] = None
+    _token_expires_at: float = 0.0
+
+    def set_cached_token(self, token: str, expires_in: int = 3600) -> None:
+        """Cache an access token with an expiration buffer."""
+        import time
+        self._cached_access_token = token
+        self._token_expires_at = time.time() + max(expires_in - 120, 60)
+        logger.info("Cached fresh Google OAuth access token (expires in %ss)", expires_in)
+
+    def clear_cached_token(self) -> None:
+        """Clear cached access token and expiration."""
+        self._cached_access_token = None
+        self._token_expires_at = 0.0
+        logger.info("Cleared cached Google Drive access token.")
+
+    async def refresh_access_token(self) -> Optional[str]:
+        """
+        Exchange GOOGLE_REFRESH_TOKEN with Google OAuth endpoint for a fresh access token.
+        """
+        import time
+        refresh_token = (
+            getattr(settings, "GOOGLE_REFRESH_TOKEN", "")
+            or os.getenv("GOOGLE_REFRESH_TOKEN", "")
+        ).strip()
+        client_id = (
+            getattr(settings, "GOOGLE_CLIENT_ID", "")
+            or os.getenv("GOOGLE_CLIENT_ID", "")
+        ).strip()
+        client_secret = (
+            getattr(settings, "GOOGLE_CLIENT_SECRET", "")
+            or os.getenv("GOOGLE_CLIENT_SECRET", "")
+        ).strip()
+
+        if not (refresh_token and client_id and client_secret):
+            return None
+
+        try:
+            logger.info("Attempting automatic refresh of Google Drive OAuth access token...")
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "refresh_token": refresh_token,
+                        "grant_type": "refresh_token",
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+
+            if res.status_code == 200:
+                data = res.json()
+                new_token = data.get("access_token", "").strip()
+                expires_in = int(data.get("expires_in", 3600))
+                if new_token:
+                    self._cached_access_token = new_token
+                    self._token_expires_at = time.time() + max(expires_in - 120, 60)
+                    logger.info("Successfully refreshed Google Drive OAuth token (expires in %ss)", expires_in)
+                    return new_token
+            else:
+                logger.warning(
+                    "Failed to refresh Google OAuth token: HTTP %s - %s",
+                    res.status_code,
+                    res.text[:200],
+                )
+                return None
+        except Exception as exc:
+            logger.error("Error refreshing Google OAuth token: %s", exc)
+            return None
+
     def _read_token_from_ide_file(self) -> str:
         """
         Read the current OAuth access token from the Antigravity IDE token store.
@@ -82,7 +154,6 @@ class ExternalDocumentMCPClient:
             if expiry_str:
                 from datetime import datetime, timezone
                 try:
-                    # Parse ISO 8601 with offset
                     expiry = datetime.fromisoformat(expiry_str)
                     if expiry.tzinfo is None:
                         expiry = expiry.replace(tzinfo=timezone.utc)
@@ -91,73 +162,154 @@ class ExternalDocumentMCPClient:
                         logger.info("IDE OAuth token is expired (expiry=%s), skipping.", expiry_str)
                         return ""
                 except ValueError:
-                    pass  # Can't parse expiry — try the token anyway
+                    pass
 
             return access_token.strip()
         except Exception as exc:
             logger.debug("Could not read IDE OAuth token file: %s", exc)
             return ""
 
-    def _resolve_token(self, token: Optional[str] = None) -> str:
-        # Priority 1: explicitly-passed per-request token
+    async def get_valid_token(self, token: Optional[str] = None, force_refresh: bool = False) -> str:
+        """
+        Resolves a valid Google Drive OAuth token with automatic refreshing.
+        Priority:
+        1. Explicitly-passed per-request token.
+        2. Cached access token (if not expired and not force_refresh).
+        3. Auto-refreshed access token via GOOGLE_REFRESH_TOKEN.
+        4. Environment/Settings GOOGLE_DRIVE_MCP_TOKEN.
+        5. IDE token store fallback.
+        """
         if token and token.strip():
             return token.strip()
-        # Priority 2: settings / environment variable
+
+        import time
+        if self._cached_access_token and time.time() < self._token_expires_at and not force_refresh:
+            return self._cached_access_token
+
+        # Attempt auto-refresh if refresh credentials are present
+        refreshed = await self.refresh_access_token()
+        if refreshed:
+            return refreshed
+
+        # Fallback to configured environment token
         env_token = (
             getattr(settings, "GOOGLE_DRIVE_MCP_TOKEN", "")
             or os.getenv("GOOGLE_DRIVE_MCP_TOKEN", "")
         ).strip()
         if env_token:
             return env_token
-        # Priority 3: IDE OAuth token file (self-healing fallback)
+
+        # Fallback to IDE token file
         ide_token = self._read_token_from_ide_file()
         if ide_token:
-            logger.debug("Using OAuth token from IDE token file.")
             return ide_token
+
         return ""
 
+    def _resolve_token(self, token: Optional[str] = None) -> str:
+        """Synchronous token resolver (returns cached or env token)."""
+        if token and token.strip():
+            return token.strip()
+        if self._cached_access_token:
+            return self._cached_access_token
+        env_token = (
+            getattr(settings, "GOOGLE_DRIVE_MCP_TOKEN", "")
+            or os.getenv("GOOGLE_DRIVE_MCP_TOKEN", "")
+        ).strip()
+        if env_token:
+            return env_token
+        return self._read_token_from_ide_file()
 
     def _get_headers(self, token: Optional[str] = None) -> Dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        resolved = self._resolve_token(token)
+        resolved = token or self._resolve_token()
         if resolved:
             headers["Authorization"] = f"Bearer {resolved}"
         return headers
 
     async def connect(self) -> Dict[str, Any]:
         """
-        Verify connection to the Google Drive MCP server by listing tools.
-        Uses the resolved OAuth token in the Authorization header.
+        Verify connection to Google Drive by:
+        1. Checking/refreshing the OAuth token.
+        2. Testing access against Google Drive API (and Drive MCP endpoint).
         """
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._next_id(),
-            "method": "tools/list",
-        }
+        token = await self.get_valid_token()
 
-        # IMPORTANT: use _get_headers() so the OAuth Bearer token is included
-        headers = self._get_headers()
-
-        if "Authorization" not in headers:
+        if not token:
             return {
                 "connected": False,
                 "server_url": self.mcp_server_url,
                 "status": "HTTP 401",
                 "detail": (
                     "Google Drive OAuth token not found. "
-                    "Authenticate Google Drive in Antigravity or configure "
-                    "GOOGLE_DRIVE_MCP_TOKEN."
+                    "Please connect your Google Drive account or configure "
+                    "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN."
                 ),
             }
 
-        try:
-            async with httpx.AsyncClient(
-                timeout=DEFAULT_TIMEOUT_SECONDS
-            ) as client:
+        drive_tools = [
+            "list_recent_files",
+            "search_files",
+            "download_file_content",
+            "read_file_content",
+        ]
 
+        # 1. Verify against Google Drive REST API (and auto-refresh on 401)
+        async def _test_drive_api(tok: str):
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
+                return await client.get(
+                    "https://www.googleapis.com/drive/v3/about?fields=user",
+                    headers={"Authorization": f"Bearer {tok}"},
+                )
+
+        try:
+            r = await _test_drive_api(token)
+            if r.status_code in (401, 403):
+                # Try force refreshing the token
+                new_tok = await self.get_valid_token(force_refresh=True)
+                if new_tok and new_tok != token:
+                    token = new_tok
+                    r = await _test_drive_api(token)
+
+            if r.status_code == 200:
+                user_data = r.json().get("user", {})
+                display_name = user_data.get("displayName", "")
+                email = user_data.get("emailAddress", "")
+                detail = f"Connected as {display_name} ({email})" if email else "Google Drive connected successfully"
+                return {
+                    "connected": True,
+                    "server_url": self.mcp_server_url,
+                    "status": "ready",
+                    "tools_count": len(drive_tools),
+                    "tools": drive_tools,
+                    "detail": detail,
+                }
+            elif r.status_code in (401, 403):
+                return {
+                    "connected": False,
+                    "server_url": self.mcp_server_url,
+                    "status": f"HTTP {r.status_code}",
+                    "detail": (
+                        "Google Drive authentication failed. "
+                        "The token is expired or invalid. Please reconnect Google Drive."
+                    ),
+                }
+        except Exception as exc:
+            logger.debug("Direct Drive API ping encountered: %s", exc)
+
+        # 2. Fallback to MCP tools/list endpoint
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": "tools/list",
+        }
+        headers = self._get_headers(token=token)
+
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
                 response = await client.post(
                     self.mcp_server_url,
                     json=payload,
@@ -166,29 +318,15 @@ class ExternalDocumentMCPClient:
 
             if response.status_code == 200:
                 data = response.json()
-
-                # Handle JSON-RPC errors even when HTTP status is 200
                 if "error" in data:
-                    error = data["error"]
-
                     return {
                         "connected": False,
                         "server_url": self.mcp_server_url,
                         "status": "MCP error",
-                        "detail": error.get(
-                            "message",
-                            "Unknown MCP server error"
-                        ),
+                        "detail": data["error"].get("message", "Unknown MCP server error"),
                     }
-
                 tools = data.get("result", {}).get("tools", [])
-
-                tool_names = [
-                    tool.get("name")
-                    for tool in tools
-                    if isinstance(tool, dict) and tool.get("name")
-                ]
-
+                tool_names = [t.get("name") for t in tools if isinstance(t, dict) and t.get("name")]
                 return {
                     "connected": True,
                     "server_url": self.mcp_server_url,
@@ -197,54 +335,13 @@ class ExternalDocumentMCPClient:
                     "tools": tool_names,
                 }
 
-            if response.status_code in (401, 403):
-                return {
-                    "connected": False,
-                    "server_url": self.mcp_server_url,
-                    "status": f"HTTP {response.status_code}",
-                    "detail": (
-                        "Google Drive authentication failed. "
-                        "The OAuth access token may be expired or invalid."
-                    ),
-                }
-
             return {
                 "connected": False,
                 "server_url": self.mcp_server_url,
                 "status": f"HTTP {response.status_code}",
                 "detail": response.text[:300],
             }
-
-        except httpx.TimeoutException:
-            logger.error("Google Drive MCP connection timed out.")
-
-            return {
-                "connected": False,
-                "server_url": self.mcp_server_url,
-                "status": "timeout",
-                "detail": "Google Drive MCP server request timed out.",
-            }
-
-        except httpx.RequestError as exc:
-            logger.error(
-                "Google Drive MCP network error: %s",
-                exc
-            )
-
-            return {
-                "connected": False,
-                "server_url": self.mcp_server_url,
-                "status": "network_error",
-                "detail": str(exc),
-            }
-
         except Exception as exc:
-            logger.error(
-                "Failed to connect to MCP server: %s",
-                exc,
-                exc_info=True,
-            )
-
             return {
                 "connected": False,
                 "server_url": self.mcp_server_url,
@@ -260,26 +357,27 @@ class ExternalDocumentMCPClient:
     ) -> Dict[str, Any]:
         """
         Execute an MCP tool via JSON-RPC 2.0 tools/call.
-        Includes a local fallback for Google Drive tools to bypass MCP server permission issues.
+        Automatically resolves fresh token and includes fallback to Drive REST API.
         """
-        resolved_token = self._resolve_token(token)
+        resolved_token = await self.get_valid_token(token)
         if not resolved_token:
             raise MCPAuthenticationError(
                 "Google Drive OAuth access token is required. "
-                "Please configure GOOGLE_DRIVE_MCP_TOKEN in root .env or provide token in request."
+                "Please connect Google Drive or configure GOOGLE_REFRESH_TOKEN."
             )
 
         # LOCAL FALLBACK FOR GOOGLE DRIVE API
-        # The official drivemcp.googleapis.com server often rejects valid tokens due to OAuth client allowlists.
-        # We intercept the tools here and execute them directly against the Drive REST API using the valid token.
         if "drive" in self.mcp_server_url.lower():
             try:
                 return await self._execute_drive_tool_local(tool_name, arguments, resolved_token)
             except MCPAuthenticationError:
+                # Try force refreshing token once
+                new_token = await self.get_valid_token(force_refresh=True)
+                if new_token and new_token != resolved_token:
+                    return await self._execute_drive_tool_local(tool_name, arguments, new_token)
                 raise
             except Exception as e:
                 logger.warning(f"Local Drive tool execution failed, falling back to MCP server: {e}")
-
         payload = {
             "jsonrpc": "2.0",
             "id": self._next_id(),
@@ -346,7 +444,7 @@ class ExternalDocumentMCPClient:
         """Executes Drive MCP tools directly against the Google Drive REST API."""
         headers = {"Authorization": f"Bearer {token}"}
         
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             if tool_name in ("list_recent_files", "search_files"):
                 page_size = arguments.get("pageSize", 10)
                 query = arguments.get("query", "")

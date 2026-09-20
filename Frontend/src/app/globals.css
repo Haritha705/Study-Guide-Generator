@@ -113,6 +113,29 @@
   transform: translateY(-1px);
 }
 
+/* Premium Luxury Glass styling */
+.premium-glass {
+  background: linear-gradient(145deg, rgba(20, 20, 30, 0.8) 0%, rgba(10, 10, 15, 0.9) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Typewriter Cursor */
+.typewriter-cursor::after {
+  content: '▋';
+  display: inline-block;
+  vertical-align: text-bottom;
+  animation: blink 1s step-start infinite;
+  color: hsl(var(--primary));
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
 /* 3D Flip Card for Flashcards */
 .perspective-1000 {
   perspective: 1000px;

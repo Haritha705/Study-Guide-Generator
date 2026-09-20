@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useStudyStore } from "@/stores/useStudyStore";
 import {
@@ -32,12 +33,25 @@ export default function HomePage() {
 
   return (
     <AppLayout>
-      <div className="max-w-6xl mx-auto px-6 py-10 space-y-16 animate-fade-in">
+      <div className="max-w-6xl mx-auto px-6 py-10 space-y-16">
         {/* HERO SECTION */}
-        <div className="relative rounded-3xl bg-gradient-to-b from-[#11111a] via-[#0d0d14] to-[#09090d] border border-white/[0.08] p-8 md:p-14 overflow-hidden shadow-2xl">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="relative rounded-3xl bg-gradient-to-b from-[#11111a] via-[#0d0d14] to-[#09090d] border border-white/[0.08] p-8 md:p-14 overflow-hidden shadow-2xl premium-glass"
+        >
           {/* Subtle Ambient Light Glows */}
-          <div className="absolute -top-24 -left-24 w-96 h-96 bg-indigo-600/15 rounded-full blur-[100px] pointer-events-none" />
-          <div className="absolute top-1/2 -right-24 w-96 h-96 bg-purple-600/15 rounded-full blur-[100px] pointer-events-none" />
+          <motion.div 
+            animate={{ scale: [1, 1.1, 1], opacity: [0.15, 0.3, 0.15] }}
+            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute -top-24 -left-24 w-96 h-96 bg-indigo-600 rounded-full blur-[100px] pointer-events-none" 
+          />
+          <motion.div 
+            animate={{ scale: [1, 1.2, 1], opacity: [0.15, 0.25, 0.15] }}
+            transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+            className="absolute top-1/2 -right-24 w-96 h-96 bg-purple-600 rounded-full blur-[100px] pointer-events-none" 
+          />
 
           <div className="relative z-10 max-w-3xl space-y-6">
             {/* Top Pill */}
@@ -119,10 +133,16 @@ export default function HomePage() {
               <span className="text-xs text-neutral-400 mt-0.5 block">Context-Aware AI Tutor</span>
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* DYNAMIC INTERACTIVE FEATURE PREVIEW */}
-        <div className="space-y-6">
+        <motion.div 
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.7 }}
+          className="space-y-6"
+        >
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">
@@ -256,7 +276,7 @@ export default function HomePage() {
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
 
         {/* ACTIVE STUDY PACK JUMP BAR */}
         {activePack && (

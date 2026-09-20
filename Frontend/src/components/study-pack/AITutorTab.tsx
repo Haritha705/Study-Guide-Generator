@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import { StudyPackOutput, TutorResponse } from "@/types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/apiClient";
 import {
   Send,
@@ -14,6 +16,33 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function TypewriterMarkdown({ content, speed = 8 }: { content: string, speed?: number }) {
+  const [displayedContent, setDisplayedContent] = useState("");
+  const [completed, setCompleted] = useState(false);
+
+  React.useEffect(() => {
+    let i = 0;
+    const interval = setInterval(() => {
+      setDisplayedContent(content.substring(0, i));
+      i += 3; // stream 3 chars at a time for snappier feel
+      if (i > content.length) {
+        setDisplayedContent(content);
+        setCompleted(true);
+        clearInterval(interval);
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [content, speed]);
+
+  return (
+    <div className={cn("prose prose-sm prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-neutral-900 prose-pre:border prose-pre:border-neutral-800", !completed ? "typewriter-cursor" : "")}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {displayedContent}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 interface ChatMessage {
   id: string;
@@ -55,18 +84,34 @@ export function AITutorTab({ pack }: { pack: StudyPackOutput }) {
     setIsLoading(true);
 
     try {
-      const response: TutorResponse = await api.askTutor({
-        question: questionToSend,
-        session_id: pack.id || "default_session",
-      });
+      // Build rich grounding context from the study pack notes, summary, and glossary
+      const contextFromPack = [
+        pack.title ? `Document Title: ${pack.title}` : "",
+        pack.summary ? `Document Summary:\n${pack.summary}` : "",
+        pack.notes && pack.notes.length > 0
+          ? `Detailed Notes:\n${pack.notes
+              .map((n) => `### ${n.topic || n.title || "Topic"}\n${n.content?.join("\n") || ""}`)
+              .join("\n\n")}`
+          : "",
+        pack.glossary && pack.glossary.length > 0
+          ? `Glossary of Terms:\n${pack.glossary.map((g) => `- ${g.term}: ${g.definition}`).join("\n")}`
+          : "",
+        pack.source_text ? `Source Document Excerpt:\n${pack.source_text.slice(0, 5000)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const response = await api.agentChat(
+        questionToSend,
+        pack.id || "default_session",
+        contextFromPack
+      );
 
       const tutorMsg: ChatMessage = {
         id: `tutor_${Date.now()}`,
         sender: "tutor",
-        text: response.answer,
-        sources: response.sources,
-        confidence: response.confidence,
-        suggestions: response.follow_up_suggestions,
+        text: response.response,
+        // Optional fields removed since agent endpoint just returns 'response' string for now
       };
 
       setMessages((prev) => [...prev, tutorMsg]);
@@ -86,9 +131,9 @@ export function AITutorTab({ pack }: { pack: StudyPackOutput }) {
   };
 
   return (
-    <div className="flex flex-col h-[650px] rounded-2xl bg-neutral-900/80 border border-neutral-800 shadow-xl overflow-hidden max-w-4xl animate-fade-in">
+    <div className="flex flex-col h-[650px] rounded-2xl premium-glass border border-neutral-800/80 shadow-2xl shadow-indigo-900/10 overflow-hidden max-w-4xl animate-fade-in">
       {/* Header */}
-      <div className="p-4 border-b border-neutral-800 bg-neutral-950/60 flex items-center justify-between">
+      <div className="p-4 border-b border-neutral-800/60 bg-neutral-950/40 flex items-center justify-between backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
             <Bot className="w-4 h-4" />
@@ -134,11 +179,15 @@ export function AITutorTab({ pack }: { pack: StudyPackOutput }) {
                   className={cn(
                     "p-4 rounded-2xl text-xs md:text-sm leading-relaxed",
                     isTutor
-                      ? "bg-neutral-950/90 border border-neutral-800 text-neutral-200"
-                      : "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                      ? "bg-neutral-900/60 border border-neutral-800/80 text-neutral-200 shadow-sm"
+                      : "bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-600/20"
                   )}
                 >
-                  {msg.text}
+                  {isTutor ? (
+                    <TypewriterMarkdown content={msg.text} />
+                  ) : (
+                    msg.text
+                  )}
 
                   {/* Confidence / Sources */}
                   {msg.confidence !== undefined && msg.confidence > 0 && (
@@ -185,7 +234,7 @@ export function AITutorTab({ pack }: { pack: StudyPackOutput }) {
       </div>
 
       {/* Query Input Box */}
-      <div className="p-4 border-t border-neutral-800 bg-neutral-950/60">
+      <div className="p-4 border-t border-neutral-800/60 bg-neutral-950/40 backdrop-blur-md">
         <form
           onSubmit={(e) => {
             e.preventDefault();

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.models import attempt, studypack, user  # Import models so SQLAlchemy metadata is aware of them
 from app.db.session import init_db
 
 # Configure logging

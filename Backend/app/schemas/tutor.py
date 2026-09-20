@@ -20,6 +20,10 @@ class TutorRequest(BaseModel):
         None,
         description="ID of the study pack to ground answers against."
     )
+    context_text: Optional[str] = Field(
+        None,
+        description="Full or excerpted study pack context (summary, notes, glossary) for immediate grounding."
+    )
 
 
 class SourceChunk(BaseModel):

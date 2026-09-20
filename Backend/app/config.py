@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # Google Drive MCP Integration
     GOOGLE_DRIVE_MCP_URL: str = "https://drivemcp.googleapis.com/mcp/v1"
     GOOGLE_DRIVE_MCP_TOKEN: str = ""
+    GOOGLE_REFRESH_TOKEN: str = ""
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URL: str = "http://localhost:8000/api/v1/auth/google/callback"
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # LangSmith - Optional
     # LANGCHAIN_TRACING_V2: str = "false"

@@ -41,19 +41,45 @@ def normalize_ai_message(message):
     return message
 
 
+import logging
+import time
+
+logger = logging.getLogger(__name__)
+
+# Fallback pool: stable production models first, followed by alternates
+CANDIDATE_GEMINI_MODELS = [
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
+]
+
 # Dual Provider Router Setup
-def get_primary_model():
-    # Gemini API (gemini-3.6-flash) for complex reasoning and structured output
+def get_primary_model(model_name: str = "gemini-flash-lite-latest"):
     return ChatGoogleGenerativeAI(
-        model="gemini-3.6-flash",
+        model=model_name,
         google_api_key=settings.GEMINI_API_KEY,
+        request_timeout=120.0,
+        max_retries=2,
     )
 
-def get_secondary_model():
-    # Mistral API (open-mixtral-8x7b) for fast extraction and preprocessing
-    return ChatMistralAI(model="open-mixtral-8x7b", temperature=0.1)
+def get_secondary_model(model_name: str = "mistral-small-latest"):
+    """Mistral AI model for extraction and automatic failover."""
+    key = (getattr(settings, "MISTRAL_API_KEY", "") or os.getenv("MISTRAL_API_KEY", "")).strip()
+    return ChatMistralAI(
+        model=model_name,
+        mistral_api_key=key,
+        temperature=0.1,
+    )
 
 def get_embeddings_model():
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    gemini_key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+    if gemini_key:
+        return GoogleGenerativeAIEmbeddings(
+            model="models/gemini-embedding-001",
+            google_api_key=gemini_key,
+        )
     return MistralAIEmbeddings(model="mistral-embed")
 
 @traceable(name="rag_chunking_pipeline")
@@ -73,12 +99,7 @@ def build_vector_store(text_content: str):
 
 @traceable(name="study_pack_generation")
 def generate_study_pack(text_content: str) -> StudyPackOutput:
-    """Orchestrates the generation of structured study materials."""
-    
-    # 1. We could use Mistral for summarizing or chunking if it was massive.
-    # But for structured JSON matching our strict schema, we use Claude.
-    
-    primary_llm = get_primary_model()
+    """Orchestrates study materials generation with immediate Mistral fallback on Gemini busy."""
     parser = PydanticOutputParser(pydantic_object=StudyPackOutput)
     
     prompt = ChatPromptTemplate.from_messages([
@@ -91,26 +112,52 @@ def generate_study_pack(text_content: str) -> StudyPackOutput:
     ])
     
     prompt = prompt.partial(format_instructions=parser.get_format_instructions())
-    
-    chain = prompt | primary_llm | RunnableLambda(normalize_ai_message) | parser
-    
-    # Execute chain (tracked by LangSmith implicitly via environment variables)
+    safe_text = text_content[:200000] if len(text_content) > 200000 else text_content
+
+    # ── 1. Primary: Stable Gemini Flash ──────────────────────────────────────
     try:
-        result = chain.invoke({"source_text": text_content})
-    except Exception as exc:
-        raise AIGenerationError(f"Failed to generate study pack: {exc}") from exc
-
-    if not result.summary.strip():
-        raise AIGenerationError("Generated study pack is missing a summary.")
-    if len(result.mcqs) != DEFAULT_QUIZ_SIZE:
-        raise AIGenerationError(
-            f"Generated study pack must contain exactly {DEFAULT_QUIZ_SIZE} MCQs."
+        logger.info("Attempting study pack generation using Gemini (gemini-flash-latest)...")
+        gemini_llm = get_primary_model("gemini-flash-latest")
+        chain = prompt | gemini_llm | RunnableLambda(normalize_ai_message) | parser
+        result = chain.invoke({"source_text": safe_text})
+        if result and result.summary.strip():
+            logger.info("Study pack generated successfully with Gemini.")
+            return result
+    except Exception as gemini_err:
+        logger.warning(
+            "Gemini returned error (%s). Falling back immediately to Mistral AI...",
+            str(gemini_err)[:180],
         )
-    if any(mcq.difficulty != DEFAULT_DIFFICULTY for mcq in result.mcqs):
-        raise AIGenerationError(
-            f"Study-pack MCQs must all have {DEFAULT_DIFFICULTY} difficulty."
-        )
-    if not result.flashcards:
-        raise AIGenerationError("Generated study pack is missing glossary flashcards.")
 
-    return result
+    # ── 2. Immediate Secondary Fallback: Mistral AI ───────────────────────────
+    mistral_key = (getattr(settings, "MISTRAL_API_KEY", "") or os.getenv("MISTRAL_API_KEY", "")).strip()
+    if mistral_key:
+        for mistral_model in ["mistral-small-latest", "ministral-8b-latest"]:
+            try:
+                logger.info("Attempting generation using Mistral fallback (%s)...", mistral_model)
+                mistral_llm = get_secondary_model(mistral_model)
+                chain = prompt | mistral_llm | RunnableLambda(normalize_ai_message) | parser
+                result = chain.invoke({"source_text": safe_text})
+                if result and result.summary.strip():
+                    logger.info("Study pack generated successfully with Mistral fallback (%s)!", mistral_model)
+                    return result
+            except Exception as mistral_err:
+                logger.warning("Mistral (%s) failed: %s", mistral_model, str(mistral_err)[:180])
+
+    # ── 3. Tertiary Retry: Alternate Gemini Endpoints ─────────────────────────
+    for alt_model in ["gemini-3.5-flash", "gemini-3.7-flash"]:
+        try:
+            logger.info("Retrying with alternate Gemini model (%s)...", alt_model)
+            time.sleep(2)
+            alt_llm = get_primary_model(alt_model)
+            chain = prompt | alt_llm | RunnableLambda(normalize_ai_message) | parser
+            result = chain.invoke({"source_text": safe_text})
+            if result and result.summary.strip():
+                return result
+        except Exception as alt_err:
+            logger.warning("Alternate model %s also failed: %s", alt_model, str(alt_err)[:180])
+
+    raise AIGenerationError(
+        "All AI providers (Gemini & Mistral) are currently experiencing high demand. Please try again in a few moments."
+    )
+

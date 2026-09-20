@@ -120,11 +120,23 @@ export const api = {
     });
   },
 
-  // 6. AI Tutor Interaction
+  // 6. AI Tutor Interaction (Legacy)
   async askTutor(tutorRequest: TutorRequest): Promise<TutorResponse> {
     return request<TutorResponse>("/api/v1/tutor/ask", {
       method: "POST",
       body: JSON.stringify(tutorRequest),
+    });
+  },
+
+  // 6.1 Multi-Agent LangGraph Chat
+  async agentChat(query: string, studyPackId?: string, contextText?: string): Promise<{ response: string }> {
+    return request<{ response: string }>("/api/v1/agent/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        query,
+        study_pack_id: studyPackId,
+        context_text: contextText,
+      }),
     });
   },
 
@@ -164,6 +176,13 @@ export const api = {
     /** Check if Google Drive MCP server is reachable and authenticated. */
     async getStatus(): Promise<DriveStatus> {
       return request<DriveStatus>("/api/v1/drive/status");
+    },
+
+    /** Disconnect Google Drive account and revoke tokens. */
+    async disconnect(): Promise<{ status: string; message: string }> {
+      return request<{ status: string; message: string }>("/api/v1/auth/google/disconnect", {
+        method: "POST",
+      });
     },
 
     /** List or search Drive files (PDFs). */

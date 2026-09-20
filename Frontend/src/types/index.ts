@@ -95,6 +95,7 @@ export interface TutorRequest {
   question: string;
   session_id?: string;
   context_id?: string;
+  context_text?: string;
 }
 
 export interface TutorResponse {
