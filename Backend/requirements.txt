@@ -17,6 +17,7 @@ aiosqlite
 pydantic-settings
 langchain-text-splitters
 langchain-google-genai
-langchain-communitylanggraph-checkpoint-sqlite
+langchain-community
+langgraph-checkpoint-sqlite
 httpx
 tavily-python
