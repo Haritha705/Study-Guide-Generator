@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { api, ApiError } from "@/lib/apiClient";
+import { api, ApiError, API_BASE_URL } from "@/lib/apiClient";
 import { DriveFile, DriveStatus } from "@/types";
 import {
   Cloud,
@@ -158,7 +158,7 @@ export function DriveBrowser({ onFileSelect, selectedFile }: DriveBrowserProps) 
             </p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               <a
-                href="http://localhost:8000/api/v1/auth/google/login"
+                href={`${API_BASE_URL}/api/v1/auth/google/login`}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-sm transition-all"
               >
                 <Cloud className="w-3.5 h-3.5" />

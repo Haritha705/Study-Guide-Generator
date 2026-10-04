@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Github, LogOut } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { API_BASE_URL } from "@/lib/apiClient";
 
 export function GitHubConnect() {
   const [token, setToken] = useState<string | null>(null);
@@ -29,7 +30,7 @@ export function GitHubConnect() {
 
   const handleConnect = () => {
     // Redirect to the backend OAuth login route
-    window.location.href = "http://localhost:8000/api/v1/auth/github/login";
+    window.location.href = `${API_BASE_URL}/api/v1/auth/github/login`;
   };
 
   const handleDisconnect = () => {
